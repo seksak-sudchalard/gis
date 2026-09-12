@@ -1,0 +1,917 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GIS Travel Expense Tracker - ระบบบันทึกรายรับรายจ่ายบนแผนที่</title>
+  <meta name="description" content="เว็บแอพสไตล์ GIS แผนที่โต้ตอบด้วย Leaflet.js บันทึกรายรับรายจ่ายการเดินทางท่องเที่ยว เชื่อมต่อและซิงค์ข้อมูลกับ Google Sheets พร้อมกราฟและสรุปงบประมาณ">
+
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Google Identity Services (GSI) -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap');
+    body { font-family: 'Prompt', -apple-system, BlinkMacSystemFont, sans-serif; }
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    .leaflet-popup-content-wrapper {
+      border-radius: 16px !important;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15) !important;
+      padding: 4px !important;
+      border: 1px solid #e2e8f0;
+    }
+    .leaflet-popup-content { margin: 8px 12px !important; line-height: 1.4 !important; }
+    .leaflet-popup-tip { background: white !important; }
+    .custom-leaflet-marker { background: transparent !important; border: none !important; }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-900 h-screen w-screen overflow-hidden flex flex-col">
+
+  <!-- Top App Navigation -->
+  <header class="h-14 shrink-0 bg-white border-b border-slate-200 px-3 sm:px-4 flex items-center justify-between z-30 shadow-xs">
+    <div class="flex items-center gap-2.5">
+      <button id="btn-toggle-sidebar" class="lg:hidden p-1.5 text-slate-600 hover:text-slate-900 rounded-lg">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+      </button>
+      <div class="flex items-center gap-2">
+        <div class="w-8 h-8 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-xs">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 2a10 10 0 100 20 10 10 0 000-20zm0 4a6 6 0 110 12 6 6 0 010-12zm-1 3l4 3-4 3V9z"/></svg>
+        </div>
+        <div>
+          <h1 class="text-sm sm:text-base font-bold text-slate-900 leading-none">GIS Travel Tracker</h1>
+          <p class="text-[11px] text-slate-500 hidden sm:block leading-none mt-0.5">แผนที่โต้ตอบบันทึกรายรับรายจ่าย &bull; ซิงค์ Google Sheet</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Center View Switcher -->
+    <div class="hidden sm:flex items-center p-0.5 bg-slate-100 rounded-xl text-xs font-medium border border-slate-200">
+      <button id="view-tab-split" onclick="switchView('split')" class="px-3 py-1 rounded-lg bg-white text-indigo-700 shadow-xs font-semibold">แผนที่ & สถิติ</button>
+      <button id="view-tab-map" onclick="switchView('map')" class="px-3 py-1 rounded-lg text-slate-600 hover:text-slate-900">แผนที่เต็มจอ</button>
+      <button id="view-tab-charts" onclick="switchView('charts')" class="px-3 py-1 rounded-lg text-slate-600 hover:text-slate-900">สรุปกราฟ & งบ</button>
+    </div>
+
+    <!-- Right Controls -->
+    <div class="flex items-center gap-2">
+      <button id="btn-sync-sheet" onclick="triggerGoogleSync()" class="px-2.5 py-1.5 rounded-lg border border-slate-200 text-xs font-medium flex items-center gap-1.5 bg-white hover:bg-slate-50 text-slate-700 shadow-2xs">
+        <svg class="w-3.5 h-3.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        <span id="sync-btn-text" class="hidden sm:inline">ซิงค์ Sheet</span>
+      </button>
+      <button onclick="openConfigModal()" title="ตั้งค่า Google OAuth / Sheet ID" class="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+      </button>
+      <button onclick="openExpenseModal()" class="inline-flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+        <span>เพิ่มรายการ</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Workspace Container -->
+  <div class="flex-1 flex overflow-hidden relative">
+    <!-- Left Sidebar: Filter & List -->
+    <aside id="sidebar-container" class="fixed lg:static inset-y-0 left-0 z-40 w-full sm:w-96 bg-white border-r border-slate-200 flex flex-col transition-transform duration-200 -translate-x-full lg:translate-x-0 shadow-lg lg:shadow-none">
+      <div class="p-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/60">
+        <div class="flex items-center gap-2">
+          <h2 class="text-sm font-bold text-slate-900">รายการบันทึก</h2>
+          <span id="badge-item-count" class="text-xs px-2 py-0.5 rounded-full font-mono bg-indigo-50 text-indigo-700 font-semibold border border-indigo-200">0 / 0</span>
+        </div>
+        <button id="btn-close-sidebar" class="lg:hidden p-1.5 text-slate-400 hover:text-slate-600 rounded-lg">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+        </button>
+      </div>
+
+      <!-- Search & Filters -->
+      <div class="p-3 border-b border-slate-100 bg-white space-y-2.5">
+        <div class="relative">
+          <input type="text" id="input-search" oninput="applyFilters()" placeholder="ค้นหาชื่อ, สถานที่, หมายเหตุ..." class="w-full pl-8 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white" />
+          <svg class="w-3.5 h-3.5 absolute left-2.5 top-2.5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+        </div>
+        <div class="flex items-center gap-1 p-0.5 bg-slate-100 rounded-lg text-xs">
+          <button onclick="setTypeFilter('all')" id="filter-type-all" class="flex-1 py-1 text-center font-medium rounded-md bg-white text-slate-900 shadow-2xs">ทั้งหมด</button>
+          <button onclick="setTypeFilter('expense')" id="filter-type-expense" class="flex-1 py-1 text-center font-medium rounded-md text-slate-600 hover:text-rose-700">รายจ่าย</button>
+          <button onclick="setTypeFilter('income')" id="filter-type-income" class="flex-1 py-1 text-center font-medium rounded-md text-slate-600 hover:text-emerald-700">รายรับ</button>
+        </div>
+        <div class="grid grid-cols-2 gap-2 text-xs">
+          <select id="filter-category" onchange="applyFilters()" class="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+            <option value="all">ทุกหมวดหมู่</option>
+            <option value="food">🍜 อาหาร/เครื่องดื่ม</option>
+            <option value="transport">🚆 เดินทาง/รถ</option>
+            <option value="lodging">🏨 ที่พัก/โรงแรม</option>
+            <option value="activity">🎟️ กิจกรรม/ตั๋ว</option>
+            <option value="shopping">🛍️ ช้อปปิ้ง</option>
+            <option value="emergency">🚨 ฉุกเฉิน</option>
+            <option value="other">🏷️ อื่นๆ</option>
+          </select>
+          <select id="filter-payment" onchange="applyFilters()" class="w-full px-2 py-1 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+            <option value="all">ทุกวิธีชำระ</option>
+            <option value="qr">📱 QR / PromptPay</option>
+            <option value="cash">💵 เงินสด</option>
+            <option value="card">💳 บัตรเครดิต</option>
+            <option value="transfer">🏦 โอนเงิน</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Scrollable List -->
+      <div id="items-scroll-list" class="flex-1 overflow-y-auto divide-y divide-slate-100"></div>
+
+      <!-- Export & Import Footer -->
+      <div class="p-3 border-t border-slate-100 bg-slate-50/80 space-y-2 text-xs">
+        <button onclick="openUploadModal()" class="w-full py-1.5 px-2 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-lg font-medium flex items-center justify-center gap-1.5 shadow-2xs">
+          <svg class="w-3.5 h-3.5 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+          <span>นำเข้า GeoJSON / CSV</span>
+        </button>
+        <div class="flex items-center gap-1 text-[11px]">
+          <span class="text-slate-400 font-medium px-1">ส่งออก:</span>
+          <button onclick="exportCSV()" class="flex-1 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-md font-mono">CSV</button>
+          <button onclick="exportJSON()" class="flex-1 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-md font-mono">JSON</button>
+          <button onclick="exportGeoJSON()" class="flex-1 py-1 bg-white hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-md font-mono">GeoJSON</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Workspace -->
+    <main class="flex-1 flex flex-col overflow-hidden relative">
+      <!-- Mobile Switcher -->
+      <div class="sm:hidden bg-white border-b border-slate-200 px-3 py-1.5 flex items-center justify-around text-xs">
+        <button onclick="switchView('map')" class="flex-1 py-1 text-center font-medium bg-indigo-50 text-indigo-700 font-semibold rounded-md">🗺️ แผนที่</button>
+        <button onclick="switchView('charts')" class="flex-1 py-1 text-center font-medium text-slate-600 rounded-md">📊 กราฟ & งบ</button>
+      </div>
+
+      <!-- Map Wrapper -->
+      <div id="map-wrapper" class="w-full h-full relative">
+        <div id="map" class="w-full h-full"></div>
+        <div class="absolute top-3 right-3 z-[1000] flex flex-col gap-1.5">
+          <button onclick="locateUserGPS()" title="GPS ของฉัน" class="w-9 h-9 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl shadow-md flex items-center justify-center text-slate-700">
+            <svg class="w-4 h-4 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+          </button>
+          <button onclick="resetMapCenter()" title="มุมมองประเทศไทย" class="w-9 h-9 bg-white hover:bg-slate-50 border border-slate-200 rounded-xl shadow-md flex items-center justify-center text-slate-700">
+            <svg class="w-4 h-4 text-slate-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Charts Wrapper -->
+      <div id="charts-wrapper" class="w-full h-full overflow-y-auto p-4 lg:p-6 bg-slate-50 hidden">
+        <div class="max-w-5xl mx-auto space-y-4">
+          <!-- Budget Banner -->
+          <div id="budget-banner" class="p-4 rounded-2xl border transition-all bg-indigo-50/70 border-indigo-100 text-indigo-950">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div class="flex items-start gap-3">
+                <div id="budget-alert-icon" class="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-indigo-100 text-indigo-600">
+                  <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                </div>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <h4 id="budget-alert-title" class="font-semibold text-sm">สถานะงบประมาณรายเดือนปกติ</h4>
+                    <span id="budget-percent-badge" class="text-xs px-2 py-0.5 rounded-full font-mono font-bold bg-white/80 border border-current/20">0%</span>
+                  </div>
+                  <p id="budget-alert-desc" class="text-xs mt-0.5 opacity-80">ใช้จ่ายในเดือนนี้: ฿0 จากงบ ฿25,000</p>
+                </div>
+              </div>
+              <button onclick="promptChangeBudget()" class="text-xs font-medium underline">ตั้งงบใหม่</button>
+            </div>
+            <div class="w-full bg-slate-200/80 rounded-full h-2.5 mt-3 overflow-hidden">
+              <div id="budget-progress-bar" class="h-full rounded-full bg-indigo-600 transition-all duration-500" style="width: 0%;"></div>
+            </div>
+          </div>
+
+          <!-- Financial Cards -->
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div class="p-3.5 bg-white border border-slate-200 rounded-xl shadow-xs">
+              <span class="text-slate-500 text-xs block mb-1">ยอดคงเหลือสุทธิ</span>
+              <p id="stat-balance" class="text-lg font-bold font-mono text-emerald-600">฿0</p>
+              <p id="stat-sub-balance" class="text-[11px] text-slate-400 mt-0.5">รับ ฿0 / จ่าย ฿0</p>
+            </div>
+            <div class="p-3.5 bg-white border border-slate-200 rounded-xl shadow-xs">
+              <span class="text-slate-500 text-xs block mb-1">ใช้จ่ายวันนี้</span>
+              <p id="stat-today" class="text-lg font-bold font-mono text-slate-900">฿0</p>
+              <p id="stat-sub-today" class="text-[11px] text-slate-400 mt-0.5">เป้าหมาย: ~฿1,000</p>
+            </div>
+            <div class="p-3.5 bg-white border border-slate-200 rounded-xl shadow-xs">
+              <span class="text-slate-500 text-xs block mb-1">ใช้จ่าย 7 วันล่าสุด</span>
+              <p id="stat-week" class="text-lg font-bold font-mono text-slate-900">฿0</p>
+              <p id="stat-sub-week" class="text-[11px] text-slate-400 mt-0.5">เฉลี่ยวันละ ฿0</p>
+            </div>
+            <div class="p-3.5 bg-white border border-slate-200 rounded-xl shadow-xs">
+              <span class="text-slate-500 text-xs block mb-1">รวมค่าใช้จ่ายทั้งทริป</span>
+              <p id="stat-total" class="text-lg font-bold font-mono text-rose-600">฿0</p>
+              <p id="stat-sub-total" class="text-[11px] text-slate-400 mt-0.5">0 รายการ</p>
+            </div>
+          </div>
+
+          <!-- Charts -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="p-4 bg-white border border-slate-200 rounded-2xl shadow-xs">
+              <h4 class="text-xs font-semibold text-slate-800 uppercase tracking-wider mb-2">📊 สัดส่วนรายจ่ายตามหมวดหมู่</h4>
+              <div class="h-64 relative flex items-center justify-center"><canvas id="categoryPieChart"></canvas></div>
+            </div>
+            <div class="p-4 bg-white border border-slate-200 rounded-2xl shadow-xs">
+              <h4 class="text-xs font-semibold text-slate-800 uppercase tracking-wider mb-2">📈 รายรับ-รายจ่ายรายวัน</h4>
+              <div class="h-64 relative"><canvas id="dailyBarChart"></canvas></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal: Expense Add/Edit -->
+  <div id="modal-expense" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 hidden">
+    <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+        <h3 id="expense-modal-title" class="text-sm font-bold text-slate-900">เพิ่มรายการค่าใช้จ่าย</h3>
+        <button onclick="closeExpenseModal()" class="text-slate-400 hover:text-slate-600">&times;</button>
+      </div>
+      <form id="form-expense" onsubmit="handleSaveExpense(event)" class="p-4 space-y-3 text-xs">
+        <input type="hidden" id="exp-id">
+        <div class="flex items-center gap-2 p-1 bg-slate-100 rounded-lg">
+          <label class="flex-1 text-center py-1 rounded font-semibold cursor-pointer has-[:checked]:bg-white has-[:checked]:text-rose-700 text-slate-600">
+            <input type="radio" name="exp_type" value="expense" checked onchange="toggleFormTypeUI()" class="hidden"> 💸 รายจ่าย
+          </label>
+          <label class="flex-1 text-center py-1 rounded font-semibold cursor-pointer has-[:checked]:bg-white has-[:checked]:text-emerald-700 text-slate-600">
+            <input type="radio" name="exp_type" value="income" onchange="toggleFormTypeUI()" class="hidden"> 💰 รายรับ
+          </label>
+        </div>
+        <div>
+          <label class="block font-medium text-slate-700 mb-1">ชื่อรายการ *</label>
+          <input type="text" id="exp-title" required class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs" placeholder="เช่น ค่าอาหาร, ค่ารถ, ที่พัก">
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block font-medium text-slate-700 mb-1">จำนวนเงิน (บาท) *</label>
+            <input type="number" step="0.01" id="exp-amount" required class="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg font-mono font-bold text-xs" placeholder="0.00">
+          </div>
+          <div>
+            <label class="block font-medium text-slate-700 mb-1">หมวดหมู่ *</label>
+            <select id="exp-category" class="w-full px-2.5 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+              <option value="food">🍜 อาหารและเครื่องดื่ม</option>
+              <option value="transport">🚆 เดินทาง / รถ</option>
+              <option value="lodging">🏨 ที่พัก / โรงแรม</option>
+              <option value="activity">🎟️ เที่ยว / ตั๋ว</option>
+              <option value="shopping">🛍️ ช้อปปิ้ง</option>
+              <option value="emergency">🚨 ฉุกเฉิน</option>
+              <option value="other">🏷️ อื่นๆ</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block font-medium text-slate-700 mb-1">วันที่ *</label>
+            <input type="date" id="exp-date" required class="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+          </div>
+          <div>
+            <label class="block font-medium text-slate-700 mb-1">เวลา</label>
+            <input type="time" id="exp-time" class="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+          </div>
+        </div>
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="block font-medium text-slate-700 mb-1">วิธีชำระ</label>
+            <select id="exp-payment" class="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+              <option value="qr">📱 QR / PromptPay</option>
+              <option value="cash">💵 เงินสด</option>
+              <option value="card">💳 บัตรเครดิต</option>
+              <option value="transfer">🏦 โอนเงิน</option>
+            </select>
+          </div>
+          <div>
+            <label class="block font-medium text-slate-700 mb-1">ชื่อสถานที่</label>
+            <input type="text" id="exp-location" placeholder="เช่น นิมมานเหมินท์" class="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs">
+          </div>
+        </div>
+        <div class="p-2.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+          <div class="flex items-center justify-between text-[11px]">
+            <span class="font-medium text-slate-700">พิกัด GIS (ละติจูด, ลองจิจูด)</span>
+            <button type="button" onclick="useCurrentLocationForModal()" class="text-indigo-600 hover:underline">📍 ตำแหน่งปัจจุบัน</button>
+          </div>
+          <div class="grid grid-cols-2 gap-2">
+            <input type="number" step="any" id="exp-lat" placeholder="Latitude" class="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs font-mono">
+            <input type="number" step="any" id="exp-lng" placeholder="Longitude" class="w-full px-2 py-1 bg-white border border-slate-200 rounded text-xs font-mono">
+          </div>
+        </div>
+        <div>
+          <label class="block font-medium text-slate-700 mb-1">หมายเหตุ</label>
+          <textarea id="exp-note" rows="2" class="w-full px-2.5 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs"></textarea>
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+          <button type="button" onclick="closeExpenseModal()" class="px-3 py-1.5 border border-slate-200 rounded-lg text-slate-600">ยกเลิก</button>
+          <button type="submit" class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg">บันทึกข้อมูล</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal: Upload GeoJSON/CSV -->
+  <div id="modal-upload" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 hidden">
+    <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+        <h3 class="text-sm font-bold text-slate-900">นำเข้าไฟล์ GeoJSON / CSV</h3>
+        <button onclick="closeUploadModal()" class="text-slate-400 hover:text-slate-600">&times;</button>
+      </div>
+      <div class="p-5 space-y-3 text-xs">
+        <div onclick="document.getElementById('file-input').click()" class="border-2 border-dashed border-indigo-200 hover:border-indigo-500 bg-indigo-50/30 rounded-xl p-6 text-center cursor-pointer">
+          <p class="font-medium text-slate-700">คลิกเลือกไฟล์ หรือลากไฟล์มาวางที่นี่</p>
+          <p class="text-[11px] text-slate-400 mt-1">รองรับ .geojson, .json หรือ .csv</p>
+          <input type="file" id="file-input" accept=".geojson,.json,.csv" onchange="handleFileSelect(event)" class="hidden">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Config Google Sheet -->
+  <div id="modal-config" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 hidden">
+    <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl border border-slate-200 overflow-hidden">
+      <div class="p-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
+        <h3 class="text-sm font-bold text-slate-900">ตั้งค่า Google Sheet & OAuth สำหรับโดเมน</h3>
+        <button onclick="closeConfigModal()" class="text-slate-400 hover:text-slate-600">&times;</button>
+      </div>
+      <div class="p-4 space-y-3 text-xs">
+        <div>
+          <label class="block font-medium text-slate-700 mb-1">Spreadsheet ID</label>
+          <input type="text" id="config-sheet-id" value="1dsyMuhOZ6LeEByJmH7Py6AIpGiVW66QN_Zs3YJxpmlo" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-mono text-xs">
+        </div>
+        <div>
+          <label class="block font-medium text-slate-700 mb-1">Sheet Tab Name</label>
+          <input type="text" id="config-sheet-name" value="sheet1" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-mono text-xs">
+        </div>
+        <div>
+          <label class="block font-medium text-slate-700 mb-1">Google OAuth 2.0 Client ID (สำหรับโดเมนของคุณ)</label>
+          <input type="text" id="config-client-id" placeholder="xxxx.apps.googleusercontent.com" class="w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg font-mono text-xs">
+          <p class="text-[11px] text-slate-400 mt-1">สร้างได้ที่ Google Cloud Console แล้วเพิ่มโดเมนของคุณใน Authorized JavaScript origins</p>
+        </div>
+        <div class="flex justify-end gap-2 pt-2 border-t border-slate-100">
+          <button onclick="saveGoogleConfig()" class="px-4 py-1.5 bg-indigo-600 text-white rounded-lg">บันทึก</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: Confirm Delete -->
+  <div id="modal-confirm" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-3 hidden">
+    <div class="bg-white w-full max-w-sm rounded-2xl shadow-2xl border border-slate-200 p-5 text-center space-y-3">
+      <h3 id="confirm-title" class="font-bold text-sm text-slate-900">ยืนยันการลบรายการ</h3>
+      <p id="confirm-msg" class="text-xs text-slate-500"></p>
+      <div class="flex justify-center gap-2 pt-2">
+        <button onclick="closeConfirmModal(false)" class="px-3 py-1.5 border border-slate-200 rounded-lg text-xs text-slate-600">ยกเลิก</button>
+        <button onclick="closeConfirmModal(true)" class="px-4 py-1.5 bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold rounded-lg">ยืนยันลบ</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- JavaScript -->
+  <script>
+    const DEFAULT_ITEMS = [
+      { id: 'exp-01', title: 'ข้าวซอยนิมมาน', amount: 180, type: 'expense', category: 'food', date: new Date().toISOString().slice(0, 10), time: '12:30', paymentMethod: 'qr', locationName: 'นิมมานเหมินท์, เชียงใหม่', coordinates: { lat: 18.7984, lng: 98.9691 }, note: 'ข้าวซอยไก่พิเศษ' },
+      { id: 'exp-02', title: 'ค่าตั๋วรถไฟด่วนพิเศษ CNR', amount: 1041, type: 'expense', category: 'transport', date: new Date().toISOString().slice(0, 10), time: '08:15', paymentMethod: 'card', locationName: 'สถานีกลางกรุงเทพอภิวัฒน์', coordinates: { lat: 13.8033, lng: 100.5404 }, note: 'ตู้นอนปรับอากาศ' },
+      { id: 'exp-03', title: 'โรงแรมระเบียงปาย', amount: 2400, type: 'expense', category: 'lodging', date: new Date().toISOString().slice(0, 10), time: '14:00', paymentMethod: 'transfer', locationName: 'ปาย, แม่ฮ่องสอน', coordinates: { lat: 19.3582, lng: 98.4412 }, note: 'ห้องพักวิวทุ่งนา' },
+      { id: 'exp-04', title: 'เงินงบเที่ยวจากเงินเดือน', amount: 15000, type: 'income', category: 'income', date: new Date().toISOString().slice(0, 7) + '-01', time: '09:00', paymentMethod: 'transfer', locationName: 'กรุงเทพฯ', coordinates: { lat: 13.7563, lng: 100.5018 }, note: 'โอนงบเข้าบัญชีเดินทาง' }
+    ];
+
+    const CATEGORIES = {
+      food: { label: 'อาหารและเครื่องดื่ม', color: '#f97316', icon: '🍜' },
+      transport: { label: 'เดินทาง / รถ', color: '#3b82f6', icon: '🚆' },
+      lodging: { label: 'ที่พัก / โรงแรม', color: '#8b5cf6', icon: '🏨' },
+      activity: { label: 'เที่ยว / บัตร', color: '#10b981', icon: '🎟️' },
+      shopping: { label: 'ช้อปปิ้ง', color: '#ec4899', icon: '🛍️' },
+      emergency: { label: 'ฉุกเฉิน', color: '#ef4444', icon: '🚨' },
+      other: { label: 'อื่นๆ', color: '#64748b', icon: '🏷️' },
+      income: { label: 'รายรับ', color: '#16a34a', icon: '💰' }
+    };
+
+    let items = [];
+    let budget = 25000;
+    let currentView = 'split';
+    let selectedItemId = null;
+    let map = null;
+    let markersLayer = null;
+    let uploadedGeoJsonLayer = null;
+    let pieChartInstance = null;
+    let barChartInstance = null;
+    let currentFilter = { search: '', type: 'all', category: 'all', payment: 'all' };
+    let confirmCallback = null;
+    let googleAccessToken = null;
+
+    function loadState() {
+      try {
+        const saved = localStorage.getItem('gis_standalone_expenses');
+        items = saved ? JSON.parse(saved) : DEFAULT_ITEMS;
+        const savedB = localStorage.getItem('gis_standalone_budget');
+        if (savedB) budget = parseFloat(savedB) || 25000;
+      } catch (e) { items = DEFAULT_ITEMS; }
+    }
+
+    function saveState() {
+      try {
+        localStorage.setItem('gis_standalone_expenses', JSON.stringify(items));
+        localStorage.setItem('gis_standalone_budget', String(budget));
+      } catch (e) {}
+    }
+
+    function initMap() {
+      map = L.map('map', { zoomControl: false }).setView([15.8700, 100.9925], 6);
+      L.control.zoom({ position: 'topright' }).addTo(map);
+
+      const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+      const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, attribution: '&copy; Esri' });
+      L.control.layers({ "ถนน (Street)": osm, "ดาวเทียม (Satellite)": sat }, null, { position: 'bottomright' }).addTo(map);
+
+      markersLayer = L.layerGroup().addTo(map);
+      map.on('click', e => openExpenseModal(null, e.latlng));
+    }
+
+    function createCategoryIcon(item) {
+      const isInc = item.type === 'income';
+      const cat = CATEGORIES[item.category] || CATEGORIES.other;
+      const bg = isInc ? '#10b981' : cat.color;
+      const symbol = isInc ? '💰' : cat.icon;
+      return L.divIcon({
+        html: `<div class="relative flex items-center justify-center hover:scale-110 transition-transform" style="width: 38px; height: 38px;"><div style="background:${bg};" class="w-8 h-8 rounded-full border-2 border-white shadow-lg flex items-center justify-center text-white text-xs font-bold font-mono">${symbol}</div><div style="border-top-color:${bg};" class="absolute -bottom-1 w-0 h-0 border-x-4 border-x-transparent border-t-6"></div></div>`,
+        className: 'custom-leaflet-marker',
+        iconSize: [38, 38],
+        iconAnchor: [19, 36],
+        popupAnchor: [0, -36]
+      });
+    }
+
+    function renderMapMarkers() {
+      if (!markersLayer) return;
+      markersLayer.clearLayers();
+      const filtered = getFilteredItems();
+
+      filtered.forEach(item => {
+        if (!item.coordinates?.lat || !item.coordinates?.lng) return;
+        const marker = L.marker([item.coordinates.lat, item.coordinates.lng], { icon: createCategoryIcon(item) });
+        const isInc = item.type === 'income';
+        marker.bindPopup(`
+          <div class="text-xs min-w-[210px]">
+            <div class="flex justify-between border-b pb-1 mb-1">
+              <span class="font-bold ${isInc ? 'text-emerald-600' : 'text-slate-900'}">${item.title}</span>
+              <span class="font-mono font-bold ${isInc ? 'text-emerald-600' : 'text-rose-600'}">${isInc ? '+' : '-'}฿${Number(item.amount).toLocaleString('th-TH', {minimumFractionDigits: 2})}</span>
+            </div>
+            <div class="space-y-0.5 text-[11px] text-slate-600">
+              <div>วันที่: ${item.date} ${item.time || ''}</div>
+              <div>วิธีชำระ: <span class="uppercase font-mono">${item.paymentMethod}</span></div>
+              ${item.locationName ? `<div>สถานที่: <strong>${item.locationName}</strong></div>` : ''}
+              ${item.note ? `<div class="italic text-slate-400">"${item.note}"</div>` : ''}
+            </div>
+            <div class="flex justify-between items-center pt-2 mt-1 border-t text-[10px]">
+              <a href="https://www.google.com/maps/dir/?api=1&destination=${item.coordinates.lat},${item.coordinates.lng}" target="_blank" class="text-indigo-600 underline">🧭 นำทาง</a>
+              <div class="flex gap-1">
+                <button onclick="openExpenseModal('${item.id}')" class="px-2 py-0.5 bg-slate-100 rounded">แก้ไข</button>
+                <button onclick="confirmDeleteItem('${item.id}')" class="px-2 py-0.5 bg-rose-50 text-rose-600 rounded">ลบ</button>
+              </div>
+            </div>
+          </div>
+        `);
+        marker.on('click', () => { selectedItemId = item.id; highlightSidebarItem(item.id); });
+        markersLayer.addLayer(marker);
+      });
+    }
+
+    function getFilteredItems() {
+      return items.filter(item => {
+        if (currentFilter.search) {
+          const q = currentFilter.search.toLowerCase();
+          if (!item.title.toLowerCase().includes(q) && !(item.note || '').toLowerCase().includes(q) && !(item.locationName || '').toLowerCase().includes(q)) return false;
+        }
+        if (currentFilter.type !== 'all' && item.type !== currentFilter.type) return false;
+        if (currentFilter.category !== 'all' && item.category !== currentFilter.category) return false;
+        if (currentFilter.payment !== 'all' && item.paymentMethod !== currentFilter.payment) return false;
+        return true;
+      });
+    }
+
+    function applyFilters() {
+      currentFilter.search = document.getElementById('input-search').value;
+      currentFilter.category = document.getElementById('filter-category').value;
+      currentFilter.payment = document.getElementById('filter-payment').value;
+      renderAll();
+    }
+
+    function setTypeFilter(type) {
+      currentFilter.type = type;
+      ['all', 'expense', 'income'].forEach(t => {
+        const btn = document.getElementById(`filter-type-${t}`);
+        btn.className = (t === type) ? "flex-1 py-1 text-center font-medium rounded-md bg-white text-slate-900 shadow-2xs font-semibold" : "flex-1 py-1 text-center font-medium rounded-md text-slate-600 hover:text-slate-900";
+      });
+      applyFilters();
+    }
+
+    function renderSidebarList() {
+      const container = document.getElementById('items-scroll-list');
+      const filtered = getFilteredItems();
+      document.getElementById('badge-item-count').innerText = `${filtered.length} / ${items.length}`;
+
+      if (filtered.length === 0) {
+        container.innerHTML = '<div class="p-8 text-center text-slate-400 text-xs">ไม่พบรายการที่ตรงเงื่อนไข</div>';
+        return;
+      }
+
+      container.innerHTML = filtered.map(item => {
+        const isInc = item.type === 'income';
+        const cat = CATEGORIES[item.category] || CATEGORIES.other;
+        const isSel = item.id === selectedItemId;
+        return `
+          <div id="side-item-${item.id}" onclick="selectItem('${item.id}')" class="p-3 cursor-pointer group flex items-start gap-2.5 ${isSel ? 'bg-indigo-50/70 border-l-4 border-indigo-600' : 'hover:bg-slate-50'}">
+            <div class="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 font-bold text-xs" style="background:${isInc ? '#dcfce7' : cat.color + '20'}; color:${isInc ? '#16a34a' : cat.color};">
+              ${isInc ? '💰' : cat.icon}
+            </div>
+            <div class="flex-1 min-w-0">
+              <div class="flex justify-between">
+                <h4 class="text-xs font-semibold text-slate-900 truncate">${item.title}</h4>
+                <span class="text-xs font-bold font-mono ${isInc ? 'text-emerald-600' : 'text-slate-900'}">${isInc ? '+' : '-'}฿${Number(item.amount).toLocaleString('th-TH')}</span>
+              </div>
+              <div class="flex items-center gap-2 text-[11px] text-slate-500 mt-0.5">
+                <span>${item.date}</span> &bull; <span class="uppercase font-mono text-[10px]">${item.paymentMethod}</span>
+              </div>
+              ${item.locationName ? `<p class="text-[11px] text-slate-400 truncate mt-0.5">📍 ${item.locationName}</p>` : ''}
+            </div>
+            <div class="flex gap-1 shrink-0 opacity-80 group-hover:opacity-100">
+              <button onclick="event.stopPropagation(); openExpenseModal('${item.id}')" class="p-1 text-slate-400 hover:text-indigo-600">✎</button>
+              <button onclick="event.stopPropagation(); confirmDeleteItem('${item.id}')" class="p-1 text-slate-400 hover:text-rose-600">✕</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function selectItem(id) {
+      selectedItemId = id;
+      highlightSidebarItem(id);
+      const item = items.find(i => i.id === id);
+      if (item?.coordinates?.lat && map) map.flyTo([item.coordinates.lat, item.coordinates.lng], 13);
+    }
+
+    function highlightSidebarItem(id) {
+      document.querySelectorAll('#items-scroll-list > div').forEach(el => el.classList.remove('bg-indigo-50/70', 'border-l-4', 'border-indigo-600'));
+      const target = document.getElementById(`side-item-${id}`);
+      if (target) {
+        target.classList.add('bg-indigo-50/70', 'border-l-4', 'border-indigo-600');
+        target.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+
+    function updateAnalyticsAndCharts() {
+      const now = new Date();
+      const curMonth = now.toISOString().slice(0, 7);
+      const today = now.toISOString().slice(0, 10);
+      const oneWeekAgo = new Date(now.getTime() - 7 * 86400000).toISOString().slice(0, 10);
+
+      let totalInc = 0, totalExp = 0, monthExp = 0, dayExp = 0, weekExp = 0;
+      const catTotals = { food: 0, transport: 0, lodging: 0, activity: 0, shopping: 0, emergency: 0, other: 0 };
+      const dailyMap = {};
+
+      items.forEach(item => {
+        const amt = Number(item.amount) || 0;
+        if (item.type === 'income') totalInc += amt;
+        else {
+          totalExp += amt;
+          catTotals[item.category] = (catTotals[item.category] || 0) + amt;
+          if (item.date?.startsWith(curMonth)) monthExp += amt;
+          if (item.date === today) dayExp += amt;
+          if (item.date >= oneWeekAgo && item.date <= today) weekExp += amt;
+        }
+        const sDate = (item.date || '').slice(5);
+        if (sDate) {
+          if (!dailyMap[sDate]) dailyMap[sDate] = { date: sDate, expense: 0, income: 0 };
+          if (item.type === 'income') dailyMap[sDate].income += amt;
+          else dailyMap[sDate].expense += amt;
+        }
+      });
+
+      const net = totalInc - totalExp;
+      document.getElementById('stat-balance').innerText = `฿${net.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+      document.getElementById('stat-balance').className = `text-lg font-bold font-mono ${net >= 0 ? 'text-emerald-600' : 'text-rose-600'}`;
+      document.getElementById('stat-sub-balance').innerText = `รับ ฿${totalInc.toLocaleString()} / จ่าย ฿${totalExp.toLocaleString()}`;
+      document.getElementById('stat-today').innerText = `฿${dayExp.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+      document.getElementById('stat-week').innerText = `฿${weekExp.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+      document.getElementById('stat-sub-week').innerText = `เฉลี่ยวันละ ฿${Math.round(weekExp / 7).toLocaleString()}`;
+      document.getElementById('stat-total').innerText = `฿${totalExp.toLocaleString('th-TH', {minimumFractionDigits: 2})}`;
+      document.getElementById('stat-sub-total').innerText = `${items.filter(i => i.type === 'expense').length} รายการ`;
+
+      const usage = budget > 0 ? Math.round((monthExp / budget) * 100) : 0;
+      document.getElementById('budget-percent-badge').innerText = `${usage}%`;
+      document.getElementById('budget-progress-bar').style.width = `${Math.min(usage, 100)}%`;
+      document.getElementById('budget-alert-desc').innerHTML = `ใช้จ่ายในเดือนนี้: <strong>฿${monthExp.toLocaleString()}</strong> จากงบ <strong>฿${budget.toLocaleString()}</strong>`;
+
+      if (usage >= 100) {
+        document.getElementById('budget-banner').className = "p-4 rounded-2xl border transition-all bg-rose-50 border-rose-200 text-rose-900";
+        document.getElementById('budget-alert-title').innerText = "⚠️ แจ้งเตือน: ใช้จ่ายเกินงบประมาณแล้ว!";
+        document.getElementById('budget-progress-bar').className = "h-full rounded-full bg-rose-600";
+      } else if (usage >= 80) {
+        document.getElementById('budget-banner').className = "p-4 rounded-2xl border transition-all bg-amber-50 border-amber-200 text-amber-900";
+        document.getElementById('budget-alert-title').innerText = `⚠️ แจ้งเตือน: ยอดใช้จ่ายใกล้ถึงงบแล้ว (${usage}%)`;
+        document.getElementById('budget-progress-bar').className = "h-full rounded-full bg-amber-500";
+      } else {
+        document.getElementById('budget-banner').className = "p-4 rounded-2xl border transition-all bg-indigo-50/70 border-indigo-100 text-indigo-950";
+        document.getElementById('budget-alert-title').innerText = "สถานะงบประมาณรายเดือนปกติ";
+        document.getElementById('budget-progress-bar').className = "h-full rounded-full bg-indigo-600";
+      }
+
+      // Charts
+      const pieLabels = [], pieData = [], pieColors = [];
+      Object.entries(catTotals).forEach(([cat, val]) => {
+        if (val > 0) {
+          pieLabels.push(CATEGORIES[cat]?.label || cat);
+          pieData.push(val);
+          pieColors.push(CATEGORIES[cat]?.color || '#94a3b8');
+        }
+      });
+      if (pieChartInstance) pieChartInstance.destroy();
+      pieChartInstance = new Chart(document.getElementById('categoryPieChart'), {
+        type: 'doughnut',
+        data: { labels: pieLabels, datasets: [{ data: pieData, backgroundColor: pieColors, borderWidth: 2, borderColor: '#fff' }] },
+        options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { family: 'Prompt', size: 11 } } } } }
+      });
+
+      const sortedDaily = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date)).slice(-7);
+      if (barChartInstance) barChartInstance.destroy();
+      barChartInstance = new Chart(document.getElementById('dailyBarChart'), {
+        type: 'bar',
+        data: {
+          labels: sortedDaily.map(d => d.date),
+          datasets: [
+            { label: 'รายจ่าย (฿)', data: sortedDaily.map(d => d.expense), backgroundColor: '#f43f5e', borderRadius: 4 },
+            { label: 'รายรับ (฿)', data: sortedDaily.map(d => d.income), backgroundColor: '#10b981', borderRadius: 4 }
+          ]
+        },
+        options: { responsive: true, maintainAspectRatio: false, scales: { x: { ticks: { font: { family: 'Prompt', size: 10 } } }, y: { ticks: { font: { family: 'Prompt', size: 10 } } } }, plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { family: 'Prompt', size: 11 } } } } }
+      });
+    }
+
+    function switchView(view) {
+      currentView = view;
+      ['split', 'map', 'charts'].forEach(v => {
+        const tab = document.getElementById(`view-tab-${v}`);
+        if (tab) tab.className = (v === view) ? "px-3 py-1 rounded-lg bg-white text-indigo-700 shadow-xs font-semibold" : "px-3 py-1 rounded-lg text-slate-600 hover:text-slate-900";
+      });
+      const mapWrap = document.getElementById('map-wrapper');
+      const chartsWrap = document.getElementById('charts-wrapper');
+      if (view === 'map') { mapWrap.className = "w-full h-full relative"; chartsWrap.className = "hidden"; }
+      else if (view === 'charts') { mapWrap.className = "hidden"; chartsWrap.className = "w-full h-full overflow-y-auto p-4 lg:p-6 bg-slate-50 block"; }
+      else { mapWrap.className = "w-full h-[55%] relative border-b border-slate-200"; chartsWrap.className = "w-full h-[45%] overflow-y-auto p-4 bg-slate-50 block"; }
+      if (map) setTimeout(() => map.invalidateSize(), 150);
+    }
+
+    function openExpenseModal(itemId = null, coords = null) {
+      const modal = document.getElementById('modal-expense');
+      const form = document.getElementById('form-expense');
+      form.reset();
+      if (itemId) {
+        const item = items.find(i => i.id === itemId);
+        if (item) {
+          document.getElementById('expense-modal-title').innerText = "แก้ไขรายการ";
+          document.getElementById('exp-id').value = item.id;
+          document.querySelector(`input[name="exp_type"][value="${item.type}"]`).checked = true;
+          document.getElementById('exp-title').value = item.title;
+          document.getElementById('exp-amount').value = item.amount;
+          document.getElementById('exp-category').value = item.category;
+          document.getElementById('exp-date').value = item.date;
+          document.getElementById('exp-time').value = item.time || '';
+          document.getElementById('exp-payment').value = item.paymentMethod || 'qr';
+          document.getElementById('exp-location').value = item.locationName || '';
+          document.getElementById('exp-lat').value = item.coordinates?.lat || '';
+          document.getElementById('exp-lng').value = item.coordinates?.lng || '';
+          document.getElementById('exp-note').value = item.note || '';
+        }
+      } else {
+        document.getElementById('expense-modal-title').innerText = "เพิ่มรายการค่าใช้จ่าย";
+        document.getElementById('exp-id').value = '';
+        document.getElementById('exp-date').value = new Date().toISOString().slice(0, 10);
+        document.getElementById('exp-time').value = new Date().toTimeString().slice(0, 5);
+        if (coords) {
+          document.getElementById('exp-lat').value = Number(coords.lat).toFixed(6);
+          document.getElementById('exp-lng').value = Number(coords.lng).toFixed(6);
+        }
+      }
+      modal.classList.remove('hidden');
+    }
+
+    function closeExpenseModal() { document.getElementById('modal-expense').classList.add('hidden'); }
+
+    function toggleFormTypeUI() {
+      const isIncome = document.querySelector('input[name="exp_type"]:checked').value === 'income';
+      const catSelect = document.getElementById('exp-category');
+      if (isIncome) {
+        if (!catSelect.querySelector('option[value="income"]')) {
+          const opt = document.createElement('option');
+          opt.value = 'income'; opt.innerText = '💰 รายรับ';
+          catSelect.appendChild(opt);
+        }
+        catSelect.value = 'income';
+      } else if (catSelect.value === 'income') catSelect.value = 'food';
+    }
+
+    function handleSaveExpense(e) {
+      e.preventDefault();
+      const id = document.getElementById('exp-id').value || ('exp-' + Date.now());
+      const type = document.querySelector('input[name="exp_type"]:checked').value;
+      const title = document.getElementById('exp-title').value.trim();
+      const amount = parseFloat(document.getElementById('exp-amount').value) || 0;
+      const category = document.getElementById('exp-category').value;
+      const date = document.getElementById('exp-date').value;
+      const time = document.getElementById('exp-time').value;
+      const paymentMethod = document.getElementById('exp-payment').value;
+      const locationName = document.getElementById('exp-location').value.trim();
+      const lat = parseFloat(document.getElementById('exp-lat').value);
+      const lng = parseFloat(document.getElementById('exp-lng').value);
+      const note = document.getElementById('exp-note').value.trim();
+
+      const newItem = { id, title, amount, type, category, date, time, paymentMethod, locationName, coordinates: (!isNaN(lat) && !isNaN(lng)) ? { lat, lng } : null, note };
+      const idx = items.findIndex(i => i.id === id);
+      if (idx >= 0) items[idx] = newItem;
+      else items.unshift(newItem);
+
+      saveState();
+      closeExpenseModal();
+      renderAll();
+      if (newItem.coordinates && map) map.flyTo([newItem.coordinates.lat, newItem.coordinates.lng], 12);
+      autoSyncGoogleSheet();
+    }
+
+    function confirmDeleteItem(id) {
+      const item = items.find(i => i.id === id);
+      if (!item) return;
+      document.getElementById('confirm-title').innerText = "ยืนยันการลบ";
+      document.getElementById('confirm-msg').innerHTML = `คุณแน่ใจหรือไม่ว่าต้องการลบ <strong>"${item.title}"</strong> (฿${item.amount})?`;
+      document.getElementById('modal-confirm').classList.remove('hidden');
+      confirmCallback = () => {
+        items = items.filter(i => i.id !== id);
+        if (selectedItemId === id) selectedItemId = null;
+        saveState();
+        renderAll();
+        autoSyncGoogleSheet();
+      };
+    }
+
+    function closeConfirmModal(confirmed) {
+      document.getElementById('modal-confirm').classList.add('hidden');
+      if (confirmed && confirmCallback) confirmCallback();
+      confirmCallback = null;
+    }
+
+    function locateUserGPS() {
+      if (!navigator.geolocation) return alert('เบราว์เซอร์ไม่รองรับ GPS');
+      navigator.geolocation.getCurrentPosition(pos => {
+        if (map) {
+          map.flyTo([pos.coords.latitude, pos.coords.longitude], 15);
+          L.circleMarker([pos.coords.latitude, pos.coords.longitude], { radius: 8, color: '#4f46e5', fillColor: '#818cf8', fillOpacity: 0.8 }).addTo(map).bindPopup("📍 ตำแหน่งปัจจุบันของคุณ").openPopup();
+        }
+      }, err => alert(err.message));
+    }
+
+    function useCurrentLocationForModal() {
+      if (!navigator.geolocation) return;
+      navigator.geolocation.getCurrentPosition(pos => {
+        document.getElementById('exp-lat').value = pos.coords.latitude.toFixed(6);
+        document.getElementById('exp-lng').value = pos.coords.longitude.toFixed(6);
+      });
+    }
+
+    function resetMapCenter() { if (map) map.flyTo([15.8700, 100.9925], 6); }
+    function promptChangeBudget() {
+      const val = prompt('กรุณาระบุงบประมาณรายเดือน (บาท):', String(budget));
+      if (val && !isNaN(val) && Number(val) > 0) {
+        budget = Number(val);
+        saveState();
+        updateAnalyticsAndCharts();
+      }
+    }
+
+    function exportCSV() {
+      const headers = ['ID', 'Title', 'Amount', 'Type', 'Category', 'Date', 'Time', 'PaymentMethod', 'LocationName', 'Latitude', 'Longitude', 'Note'];
+      const rows = items.map(i => [i.id, `"${(i.title || '').replace(/"/g, '""')}"`, i.amount, i.type, i.category, i.date, i.time || '', i.paymentMethod, `"${(i.locationName || '').replace(/"/g, '""')}"`, i.coordinates?.lat || '', i.coordinates?.lng || '', `"${(i.note || '').replace(/"/g, '""')}"`]);
+      downloadFile('\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n'), `travel_expenses_${new Date().toISOString().slice(0, 10)}.csv`, 'text/csv;charset=utf-8;');
+    }
+
+    function exportJSON() { downloadFile(JSON.stringify(items, null, 2), `travel_expenses_${new Date().toISOString().slice(0, 10)}.json`, 'application/json'); }
+    function exportGeoJSON() {
+      const geo = {
+        type: "FeatureCollection",
+        features: items.filter(i => i.coordinates?.lat && i.coordinates?.lng).map(i => ({
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [i.coordinates.lng, i.coordinates.lat] },
+          properties: { ...i }
+        }))
+      };
+      downloadFile(JSON.stringify(geo, null, 2), `travel_gis_${new Date().toISOString().slice(0, 10)}.geojson`, 'application/geo+json');
+    }
+
+    function downloadFile(content, filename, mimeType) {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function openUploadModal() { document.getElementById('modal-upload').classList.remove('hidden'); }
+    function closeUploadModal() { document.getElementById('modal-upload').classList.add('hidden'); }
+
+    function handleFileSelect(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(evt) {
+        try {
+          const text = evt.target.result;
+          if (file.name.endsWith('.geojson') || file.name.endsWith('.json')) {
+            const parsed = JSON.parse(text);
+            if (parsed.type === 'FeatureCollection' && Array.isArray(parsed.features)) {
+              if (uploadedGeoJsonLayer) map.removeLayer(uploadedGeoJsonLayer);
+              uploadedGeoJsonLayer = L.geoJSON(parsed).addTo(map);
+              map.fitBounds(uploadedGeoJsonLayer.getBounds());
+              parsed.features.forEach(f => {
+                const p = f.properties || {};
+                const coords = f.geometry?.coordinates;
+                items.unshift({
+                  id: 'imp-' + Date.now() + Math.random().toString(36).substr(2, 4),
+                  title: p.title || p.name || 'GeoJSON Item',
+                  amount: Number(p.amount) || 100,
+                  type: p.type || 'expense',
+                  category: p.category || 'other',
+                  date: p.date || new Date().toISOString().slice(0, 10),
+                  paymentMethod: p.paymentMethod || 'qr',
+                  locationName: p.locationName || '',
+                  coordinates: coords ? { lat: coords[1], lng: coords[0] } : null,
+                  note: p.note || ''
+                });
+              });
+            }
+          }
+          saveState(); closeUploadModal(); renderAll(); autoSyncGoogleSheet();
+          alert('นำเข้าไฟล์สำเร็จแล้ว');
+        } catch (err) { alert('ไม่สามารถอ่านไฟล์ได้: ' + err.message); }
+      };
+      reader.readAsText(file);
+    }
+
+    function openConfigModal() { document.getElementById('modal-config').classList.remove('hidden'); }
+    function closeConfigModal() { document.getElementById('modal-config').classList.add('hidden'); }
+    function saveGoogleConfig() {
+      localStorage.setItem('gis_sheet_id', document.getElementById('config-sheet-id').value.trim());
+      localStorage.setItem('gis_sheet_name', document.getElementById('config-sheet-name').value.trim());
+      localStorage.setItem('gis_client_id', document.getElementById('config-client-id').value.trim());
+      closeConfigModal(); alert('บันทึกการตั้งค่าแล้ว');
+    }
+
+    function triggerGoogleSync() {
+      const clientId = localStorage.getItem('gis_client_id') || document.getElementById('config-client-id').value;
+      if (!clientId) { alert('กรุณาระบุ Google Client ID ในปุ่มฟันเฟืองก่อน'); openConfigModal(); return; }
+      if (window.google?.accounts) {
+        google.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: 'https://www.googleapis.com/auth/spreadsheets',
+          callback: (res) => {
+            if (res.access_token) {
+              googleAccessToken = res.access_token;
+              document.getElementById('sync-btn-text').innerText = "ซิงค์แล้ว ✓";
+              autoSyncGoogleSheet();
+            }
+          }
+        }).requestAccessToken();
+      }
+    }
+
+    async function autoSyncGoogleSheet() {
+      if (!googleAccessToken) return;
+      const sheetId = localStorage.getItem('gis_sheet_id') || '1dsyMuhOZ6LeEByJmH7Py6AIpGiVW66QN_Zs3YJxpmlo';
+      const sheetName = localStorage.getItem('gis_sheet_name') || 'sheet1';
+      try {
+        const rows = [
+          ['ID', 'ชื่อรายการ', 'จำนวนเงิน', 'ประเภท', 'หมวดหมู่', 'วันที่', 'เวลา', 'วิธีชำระ', 'สถานที่', 'ละติจูด', 'ลองจิจูด', 'หมายเหตุ'],
+          ...items.map(i => [i.id, i.title, i.amount, i.type, i.category, i.date, i.time || '', i.paymentMethod, i.locationName || '', i.coordinates?.lat || '', i.coordinates?.lng || '', i.note || ''])
+        ];
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${sheetName}!A1:L:clear`, { method: 'POST', headers: { Authorization: `Bearer ${googleAccessToken}` } });
+        await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetId}/values/${sheetName}!A1?valueInputOption=USER_ENTERED`, {
+          method: 'PUT',
+          headers: { Authorization: `Bearer ${googleAccessToken}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ range: `${sheetName}!A1`, majorDimension: 'ROWS', values: rows })
+        });
+        document.getElementById('sync-btn-text').innerText = "ซิงค์แล้ว ✓";
+      } catch (e) { console.error('Sheet sync err:', e); }
+    }
+
+    function renderAll() { renderMapMarkers(); renderSidebarList(); updateAnalyticsAndCharts(); }
+
+    document.getElementById('btn-toggle-sidebar').addEventListener('click', () => document.getElementById('sidebar-container').classList.toggle('-translate-x-full'));
+    document.getElementById('btn-close-sidebar').addEventListener('click', () => document.getElementById('sidebar-container').classList.add('-translate-x-full'));
+
+    window.addEventListener('DOMContentLoaded', () => {
+      loadState(); initMap(); renderAll();
+      const sId = localStorage.getItem('gis_sheet_id'); if (sId) document.getElementById('config-sheet-id').value = sId;
+      const cId = localStorage.getItem('gis_client_id'); if (cId) document.getElementById('config-client-id').value = cId;
+    });
+  </script>
+</body>
+</html>
