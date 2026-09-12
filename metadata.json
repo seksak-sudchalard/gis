@@ -1,6 +1,0 @@
-{
-  "name": "GIS Travel Expense Tracker",
-  "description": "เว็บแอพสไตล์ GIS แผนที่โต้ตอบด้วย Leaflet.js บันทึกรายรับรายจ่ายการเดินทางท่องเที่ยว เชื่อมต่อและซิงค์ข้อมูลกับ Google Sheets พร้อมกราฟและสรุปงบประมาณ",
-  "requestFramePermissions": ["geolocation"],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
-}
